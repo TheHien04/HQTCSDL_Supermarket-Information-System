@@ -57,7 +57,7 @@ Hệ cơ sở dữ liệu quan hệ gồm các bảng chính:
 - **Nhà cung cấp (Suppliers)**: Thông tin nhà sản xuất và nhà cung cấp  
 
 <p align="center">
-  <img src="Image/Logical.jpg" alt="Sơ đồ cơ sở dữ liệu" width="800"/>
+  <img src="Image/Logical.png" alt="Sơ đồ cơ sở dữ liệu" width="800"/>
 </p>  
 <p align="center"><em>Logical schema of the supermarket database</em></p>  
 
