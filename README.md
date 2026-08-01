@@ -102,13 +102,21 @@ The schema is designed in third normal form (3NF) with declarative primary and f
 | `usp_DieuChinhPhanHangKhachHang` | Customer Care | Recompute a single customer's loyalty tier |
 | `usp_CapNhatPhanHangDauThang` | Customer Care | Batch tier refresh at month start |
 | `usp_GuiPhieuMuaHangSinhNhat` | Customer Care | Issue birthday vouchers for a given birth month |
+| `usp_QuanLyChuongTrinhKhuyenMai` | Merchandising | Dispatch Flash / Combo / Member campaign setup |
 | `usp_ThietLapChuongTrinhFlashSale` | Merchandising | Create a flash-sale campaign under stock limits |
 | `usp_ThietLapChuongTrinhComboSale` | Merchandising | Create a two-SKU combo promotion |
 | `usp_ThietLapChuongTrinhMemberSale` | Merchandising | Create a member-tier-specific promotion |
-| `usp_TaoDonHang` | Order Processing | Create an order, apply best promotion, decrement stock |
+| `usp_TaoDonHang` / `usp_TaoHoaDon` | Order Processing | Create an order, select best promotion, cap discount at 3 units |
+| `usp_ApDungKhuyenMai_SanPham` | Order Processing | Choose the best eligible promotion for a line item |
 | `usp_XuLyDonHang` | Order Processing | Finalize totals and redeem gift vouchers |
+| `usp_XuLyHuyDon` | Order Processing | Cancel an order and restore inventory |
 | `usp_TraLaiDonHang` | Order Processing | Process a return and restore inventory |
-| `usp_CapNhatSL_HT` | Inventory / Orders | Atomically adjust on-hand quantity |
+| `usp_CapNhatSL_HT` | Warehouse | Atomically decrement on-hand quantity |
+| `usp_ChinhSuaSL_SP_TD` | Warehouse | Maintain maximum storage capacity |
+| `usp_KiemTraDieuKienDatHang` | Warehouse | Enforce 70% reorder threshold, 10% minimum order, capacity cap |
+| `usp_TinhHangCanDat` | Warehouse | Compute `SL_SP_TD - SL_HT - SL_CG` |
+| `usp_ThucHienDatHang` / `usp_DatHangCuoiNgay` | Warehouse | Create purchase orders for under-threshold SKUs |
+| `usp_CapNhatSL_HDG` / `usp_CapNhatSL_HCG` | Warehouse | Receive deliveries and update on-hand / in-transit stock |
 | `usp_KhachHangDoanhThu` | Analytics | Daily customer count and revenue |
 | `usp_SoLuongDaBanVaKhachMua` | Analytics | Per-SKU sales volume and distinct buyers |
 | `usp_ThangMuaSam` | Analytics | Monthly bestselling products |
@@ -149,13 +157,18 @@ These experiments illustrate the classical trade-off between **isolation strengt
 
 ## 6. Repository Structure
 
+Submission script names follow the course specification; legacy Group-6 filenames are kept as synchronized copies.
+
 ```text
 .
 ├── Code/
-│   ├── Nhóm-6_database.sql      # DDL: database & relational schema
-│   ├── Nhóm-6_procedures.sql    # Production stored procedures & concurrency controls
+│   ├── database.sql             # DDL: database & relational schema  (required name)
 │   ├── data.sql                 # Seed data (≥10 rows/table; ≥50 products; ≥30 promotions)
-│   └── Nhom6_demo.sql           # Conflict reproduction scripts (Lost Update / Phantom / Non-Repeatable Read)
+│   ├── procedures.sql           # Production stored procedures & concurrency controls
+│   ├── demo.sql                 # Conflict reproduction + warehouse demos
+│   ├── Nhóm-6_database.sql      # Synchronized copy of database.sql
+│   ├── Nhóm-6_procedures.sql    # Synchronized copy of procedures.sql
+│   └── Nhom6_demo.sql           # Synchronized copy of demo.sql
 ├── Image/
 │   ├── Market.jpg               # Domain illustration
 │   └── Logic.png                # Logical schema diagram
@@ -183,13 +196,13 @@ Execute the scripts **in order** against a local SQL Server instance:
 
 ```sql
 -- 1. Create database and schema
-:r Code/Nhóm-6_database.sql
+:r Code/database.sql
 
 -- 2. Load experimental dataset
 :r Code/data.sql
 
 -- 3. Install production procedures
-:r Code/Nhóm-6_procedures.sql
+:r Code/procedures.sql
 ```
 
 Alternatively, open each file in SSMS and execute with `HQTCSDL` as the target database (the DDL script creates the database automatically).
@@ -197,11 +210,20 @@ Alternatively, open each file in SSMS and execute with `HQTCSDL` as the target d
 ### Running a Concurrency Experiment
 
 1. Open **two** query windows connected to `HQTCSDL`.  
-2. From `Code/Nhom6_demo.sql`, select one anomaly block (e.g., Lost Update – Scenario 1).  
+2. From `Code/demo.sql`, select one anomaly block (e.g., Lost Update – Scenario 1, or warehouse receiving).  
 3. Create the delayed “unsafe” procedure in either window.  
 4. Start the delayed procedure in Window A; within the delay window, start the contending procedure in Window B.  
 5. Observe the incorrect final state (anomaly).  
 6. Re-run the same workload using the production procedures (with isolation/locking enabled) and verify consistency.
+
+### Warehouse reorder demo
+
+```sql
+DECLARE @SL INT, @OK BIT;
+EXEC usp_TinhHangCanDat 'SP015', @SL OUTPUT;   -- seeded below 70% capacity
+EXEC usp_ThucHienDatHang 'SP015', NULL, @OK OUTPUT;
+EXEC usp_DatHangCuoiNgay;                      -- scan all under-threshold SKUs
+```
 
 ---
 
@@ -224,9 +246,12 @@ Promotion validity windows and quantities are chosen so that concurrent order an
 
 - **Business rules live in procedures.** Per course requirements, only key and domain constraints are declared in DDL; remaining semantic constraints (tier thresholds, promotion eligibility, stock capacity, voucher redemption) are enforced inside stored procedures.  
 - **No triggers for business logic.** Automation is achieved through explicit procedure orchestration.  
-- **Order status vocabulary** is normalized to `N'Thành công'` / `N'Trả lại'` / `N'Đang xử lý'` so loyalty and analytics queries remain consistent with order finalization.  
+- **Order status vocabulary** is normalized to `N'Thành công'` / `N'Trả lại'` / `N'Đã hủy'` / `N'Đang xử lý'` so loyalty and analytics queries remain consistent with order finalization.  
 - **Customer deletion** removes dependent vouchers and loyalty rows first, and refuses deletion when historical orders still reference the customer—preserving referential integrity.  
-- **Combo-sale foreign keys** reference both participating products (`IDSanPham1`, `IDSanPham2`).
+- **Combo-sale foreign keys** reference both participating products (`IDSanPham1`, `IDSanPham2`).  
+- **Member-sale tiers** use the same Vietnamese labels as loyalty cards (`Vàng`, `Bạc`, `Bạch Kim`, …).  
+- **Warehouse policy:** reorder when `SL_HT < 70% * SL_SP_TD`; order quantity ≥ `10% * SL_SP_TD`; never exceed capacity after accounting for in-transit stock (`SL_CG`).  
+- **Promotion selection** prefers the highest discount among currently valid Flash / Combo / Member campaigns, with at most three discounted units per SKU.
 
 ---
 
