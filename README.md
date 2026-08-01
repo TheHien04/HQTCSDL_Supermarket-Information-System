@@ -1,105 +1,260 @@
-<!-- Hình nền đầu -->
 <p align="center">
-  <img src="Image/Market.jpg" alt="Siêu thị" width="100%"/>
+  <img src="Image/Market.jpg" alt="Supermarket information system" width="100%"/>
 </p>
 
----
+# Supermarket Information System  
+### A Transactional Database Design and Concurrency Control Study
 
-# 🛒 Hệ Thống Thông Tin Siêu Thị  
-
-## 📌 Giới Thiệu  
-Đây là dự án môn học **Hệ Quản Trị Cơ Sở Dữ Liệu (DBMS)**, phát triển bằng **Microsoft SQL Server**.  
-Mục tiêu là xây dựng hệ thống quản lý cho **Siêu thị ABC**, bao gồm **sản phẩm, khách hàng, chương trình khuyến mãi, đơn hàng và kho hàng** cho cả mua sắm **online** và **offline**.  
-
-The project applies advanced database concepts such as:  
-- ✅ Database normalization (1NF → 3NF)  
-- ✅ Stored Procedures & Triggers for automation  
-- ✅ Views & Indexes for query optimization  
-- ✅ Role-based security & access control  
+**Course:** Database Management Systems (Hệ Quản Trị Cơ Sở Dữ Liệu)  
+**Institution:** Faculty of Information Technology, University of Science, VNU-HCM  
+**Department:** Information Systems  
+**Platform:** Microsoft SQL Server · Transact-SQL (T-SQL)
 
 ---
 
-## 🏗️ Các Bộ Phận Trong Hệ Thống  
+## Abstract
 
-1. **Bộ phận Chăm Sóc Khách Hàng**  
-   - Quản lý tài khoản khách hàng  
-   - Phân loại khách hàng thân thiết và khách vãng lai  
-   - Gửi phiếu giảm giá  
+This repository presents a relational database implementation for **Supermarket ABC**, a retail enterprise that operates both online and offline sales channels. The system models core business subsystems—customer relationship management, product cataloguing, promotional campaigns, order processing, inventory control, and commercial analytics—while emphasizing the transactional guarantees required of a production-grade database management system.
 
-2. **Bộ phận Quản Lý Ngành Hàng**  
-   - Quản lý thông tin sản phẩm  
-   - Quản lý chương trình khuyến mãi (*Flash-sale, Combo-sale, Member-sale*)  
-
-3. **Bộ phận Xử Lý Đơn Hàng**  
-   - Xử lý đơn hàng từ khách hàng thân thiết và khách vãng lai  
-   - Cập nhật trạng thái đơn hàng  
-
-4. **Bộ phận Quản Lý Kho Hàng**  
-   - Theo dõi số lượng tồn kho  
-   - Tự động đặt hàng khi kho dưới ngưỡng  
-
-5. **Bộ phận Kinh Doanh**  
-   - Thống kê doanh thu  
-   - Báo cáo số lượng bán hàng  
+Beyond schema design and stored-procedure development, the project systematically investigates **concurrent execution anomalies** (lost update, phantom read, and non-repeatable read), and demonstrates how **isolation levels**, **explicit locking hints**, and carefully structured transactions can preserve data consistency under contention. The artifact therefore serves both as an operational prototype and as an empirical study of concurrency control in Microsoft SQL Server.
 
 ---
 
-## 🗄️ Cơ Sở Dữ Liệu  
+## 1. Problem Statement
 
-Hệ cơ sở dữ liệu quan hệ gồm các bảng chính:  
+Supermarket ABC sells consumer goods across Ho Chi Minh City through dual retail channels. Daily operations involve high-frequency updates to shared resources: membership tiers, promotional quotas, order totals, and warehouse stock. Without rigorous transaction design, concurrent procedures can produce incorrect inventory balances, inconsistent loyalty rankings, or distorted revenue reports.
 
-- **Khách hàng (Customers)**: Quản lý thông tin và phân hạng khách hàng  
-- **Sản phẩm (Products)**: Thông tin sản phẩm, nhà sản xuất, giá  
-- **Chương trình khuyến mãi (Promotions)**: Flash-sale, Combo-sale, Member-sale  
-- **Đơn hàng (Orders)**: Đơn hàng của khách hàng  
-- **Chi tiết đơn hàng (OrderDetails)**: Các sản phẩm trong mỗi đơn hàng  
-- **Kho hàng (Inventory)**: Quản lý tồn kho và đặt hàng lại  
-- **Nhà cung cấp (Suppliers)**: Thông tin nhà sản xuất và nhà cung cấp  
+The assignment therefore requires:
+
+1. A normalized relational model satisfying all stated business constraints.  
+2. Encoded integrity rules inside stored procedures (primary/unique/foreign keys and domains in DDL; remaining business rules in procedures—not triggers).  
+3. Identification and classification of concurrent conflict pairs.  
+4. Isolation- and lock-based resolutions, validated through reproducible conflict scenarios with sample data.
+
+---
+
+## 2. System Architecture
+
+The enterprise is decomposed into five functional subsystems. Each subsystem maps to a set of stored procedures that encapsulate domain logic and concurrency policy.
+
+| Subsystem | Responsibilities |
+|---|---|
+| **Customer Care** | Account lifecycle, loyalty tier adjustment (six tiers based on prior-year spend), birthday voucher issuance |
+| **Category & Merchandising** | One-level product taxonomy, product CRUD, Flash-sale / Combo-sale / Member-sale campaign setup |
+| **Order Processing** | Online & offline order creation, best-applicable promotion selection, gift-voucher redemption, returns |
+| **Warehouse Management** | Stock monitoring against maximum capacity (`SL_SP_TD`), reorder threshold (70%), and outstanding purchase orders |
+| **Business Analytics** | Daily customer/revenue aggregates, per-SKU sales volume & buyer counts, return statistics, monthly bestsellers |
+
+### Loyalty Tier Policy
+
+| Tier | Prior-year spending | Birthday voucher |
+|---|---|---|
+| Diamond (*Kim Cương*) | ≥ 50,000,000 VND | 1,200,000 VND |
+| Platinum (*Bạch Kim*) | ≥ 30,000,000 VND | 700,000 VND |
+| Gold (*Vàng*) | ≥ 15,000,000 VND | 500,000 VND |
+| Silver (*Bạc*) | ≥ 5,000,000 VND | 200,000 VND |
+| Bronze (*Đồng*) | ≥ 1,000,000 VND | 100,000 VND |
+| Member (*Thân Thiết*) | Default for new accounts | 50,000 VND |
+
+Promotion rules enforce that (i) promotional quantity never exceeds on-hand stock at campaign creation, (ii) each line item receives at most one promotion, and (iii) discounted quantity is capped at three units per promoted SKU.
+
+---
+
+## 3. Logical Data Model
+
+The schema is designed in third normal form (3NF) with declarative primary and foreign keys. Principal entities include customers and loyalty cards, gift vouchers, categories and products, promotion headers with typed specializations (Flash / Combo / Member), orders and line items, warehouse balances, and purchase-order documents.
 
 <p align="center">
-  <img src="Image/Logic.png" alt="Sơ đồ cơ sở dữ liệu" width="800"/>
-</p>  
-<p align="center"><em>Logical schema of the supermarket database</em></p>  
+  <img src="Image/Logic.png" alt="Logical schema of the supermarket database" width="820"/>
+</p>
+<p align="center"><em>Figure 1. Logical relational schema of database <code>HQTCSDL</code></em></p>
+
+### Core Relations
+
+| Relation | Description |
+|---|---|
+| `KHACHHANG` / `KHACHHANGTHE` | Customer identity and loyalty membership |
+| `PHIEUGIAMGIA` | Issued purchase vouchers |
+| `DANHMUC` / `SANPHAM` | Product taxonomy and catalog |
+| `GIAMGIA`, `FlashSale`, `ComboSale`, `MemberSale` | Promotion header and typed campaign details |
+| `DonHang` / `SanPhamDonHang` | Orders and line items (online / offline) |
+| `KhoHang` | On-hand, capacity, and in-transit quantities |
+| `PhieuDat` / `HangDat` | Replenishment orders and delivery progress |
 
 ---
 
-## 🚀 Các Tính Năng Chính  
+## 4. Implementation Overview
 
-- **Quản Lý Khách Hàng**  
-  - Tạo tài khoản khách hàng  
-  - Phân loại khách hàng thân thiết  
-  - Tự động gửi phiếu giảm giá  
+### 4.1 Technology Stack
 
-- **Quản Lý Sản Phẩm & Ngành Hàng**  
-  - Đăng ký sản phẩm mới  
-  - Cập nhật giá và thông tin nhà sản xuất  
-  - Theo dõi sản phẩm trong các chương trình khuyến mãi  
+| Layer | Choice |
+|---|---|
+| RDBMS | Microsoft SQL Server |
+| Language | Transact-SQL (T-SQL) |
+| Tooling | SQL Server Management Studio (SSMS) |
+| Integrity | PK / UK / FK / domain constraints in DDL; business rules in stored procedures |
+| Concurrency | `SERIALIZABLE`, `REPEATABLE READ`, `READ COMMITTED`; hints such as `HOLDLOCK`, `UPDLOCK`, `XLOCK`, `ROWLOCK`, `TABLOCK` |
 
-- **Quản Lý Chương Trình Khuyến Mãi**  
-  - Flash-sale  
-  - Combo-sale  
-  - Member-sale  
+### 4.2 Representative Stored Procedures
 
-- **Quản Lý Đơn Hàng**  
-  - Tạo và quản lý đơn hàng  
-  - Cập nhật trạng thái đơn hàng  
+| Procedure | Subsystem | Purpose |
+|---|---|---|
+| `usp_DieuChinhPhanHangKhachHang` | Customer Care | Recompute a single customer's loyalty tier |
+| `usp_CapNhatPhanHangDauThang` | Customer Care | Batch tier refresh at month start |
+| `usp_GuiPhieuMuaHangSinhNhat` | Customer Care | Issue birthday vouchers for a given birth month |
+| `usp_ThietLapChuongTrinhFlashSale` | Merchandising | Create a flash-sale campaign under stock limits |
+| `usp_ThietLapChuongTrinhComboSale` | Merchandising | Create a two-SKU combo promotion |
+| `usp_ThietLapChuongTrinhMemberSale` | Merchandising | Create a member-tier-specific promotion |
+| `usp_TaoDonHang` | Order Processing | Create an order, apply best promotion, decrement stock |
+| `usp_XuLyDonHang` | Order Processing | Finalize totals and redeem gift vouchers |
+| `usp_TraLaiDonHang` | Order Processing | Process a return and restore inventory |
+| `usp_CapNhatSL_HT` | Inventory / Orders | Atomically adjust on-hand quantity |
+| `usp_KhachHangDoanhThu` | Analytics | Daily customer count and revenue |
+| `usp_SoLuongDaBanVaKhachMua` | Analytics | Per-SKU sales volume and distinct buyers |
+| `usp_ThangMuaSam` | Analytics | Monthly bestselling products |
 
-- **Quản Lý Kho Hàng**  
-  - Theo dõi số lượng tồn kho  
-  - Tự động đặt hàng khi kho thấp  
-
-- **Báo Cáo & Phân Tích**  
-  - Thống kê doanh thu  
-  - Theo dõi số lượng bán hàng  
+Procedures consistently wrap critical sections in explicit transactions, select an isolation level appropriate to the anomaly under consideration, and apply lock hints to bound the locking scope.
 
 ---
 
-## 🛠️ Công Nghệ Sử Dụng  
+## 5. Concurrency Control Study
 
-- **Cơ sở dữ liệu**: Microsoft SQL Server  
-- **Ngôn ngữ**: T-SQL (Transact-SQL)  
-- **Công cụ**: SQL Server Management Studio (SSMS)  
-- **Thiết kế DB**: ERD, chuẩn hóa (1NF → 3NF)  
-- **Tối ưu hóa**: Views & Indexes  
-- **Tự động hóa**: Stored Procedures & Triggers  
-- **Bảo mật**: Role-based Access Control (RBAC)  
+A central contribution of this project is the controlled reproduction of concurrency anomalies and their mitigation. Demo scripts in `Code/Nhom6_demo.sql` intentionally weaken isolation (or omit locking) so that students can observe incorrect outcomes, then compare them with the hardened procedures in `Code/Nhóm-6_procedures.sql`.
+
+### 5.1 Lost Update
+
+| Scenario | Contending procedures | Shared resource | Mitigation |
+|---|---|---|---|
+| Inventory decrement | Delayed `usp_CapNhatSL_HT` vs. production version | `KhoHang.SL_HT` | `REPEATABLE READ` + exclusive lock (`XLOCK`) on stock rows |
+| Loyalty recomputation | Delayed tier update vs. order return + tier update | Derived spend & `KHACHHANGTHE.LoaiThe` | `SERIALIZABLE` + `REPEATABLEREAD` / `HOLDLOCK` on read–write sets |
+| Order total rewrite | Add line item vs. remove line item | `DonHang.TongGiaTriDonHang` | `SERIALIZABLE` + `UPDLOCK` on the order header |
+
+### 5.2 Phantom Read
+
+| Scenario | Contending procedures | Anomaly | Mitigation |
+|---|---|---|---|
+| Birthday voucher batch | Voucher issuance vs. new member insert | Newly inserted birthday customer appears mid-scan | `SERIALIZABLE` + `UPDLOCK, HOLDLOCK` on customer joins |
+| Month-start tier batch | Batch ranking vs. new customer + large order | Phantom member alters ranking coverage | `SERIALIZABLE` over the customer–order predicate |
+| Daily revenue report | Revenue aggregation vs. order return | Aggregate counts change between two reads | `SERIALIZABLE` + `HOLDLOCK` on the daily order set |
+
+### 5.3 Non-Repeatable Read
+
+| Scenario | Contending procedures | Anomaly | Mitigation |
+|---|---|---|---|
+| Return statistics | Return report vs. line-item quantity update | Same return lines yield different quantities across two reads | `REPEATABLE READ` on `DonHang` / `SanPhamDonHang` |
+
+These experiments illustrate the classical trade-off between **isolation strength** and **concurrency throughput**, and justify why operational procedures default to conservative locking on hot paths (inventory, loyalty, and promotional quotas).
+
+---
+
+## 6. Repository Structure
+
+```text
+.
+├── Code/
+│   ├── Nhóm-6_database.sql      # DDL: database & relational schema
+│   ├── Nhóm-6_procedures.sql    # Production stored procedures & concurrency controls
+│   ├── data.sql                 # Seed data (≥10 rows/table; ≥50 products; ≥30 promotions)
+│   └── Nhom6_demo.sql           # Conflict reproduction scripts (Lost Update / Phantom / Non-Repeatable Read)
+├── Image/
+│   ├── Market.jpg               # Domain illustration
+│   └── Logic.png                # Logical schema diagram
+├── Report/
+│   ├── Báo_cáo_lần_1_HQT.pdf    # Requirements refinement, ER/relational design, procedure catalogue
+│   ├── Báo_cáo_lần_2_HQT.pdf    # Pseudocode & concurrent conflict classification
+│   ├── Báo_cáo_lần_3_HQT.pdf    # Locking strategy & isolation design
+│   └── Báo_cáo_lần_4_HQT.pdf    # Concrete conflict scenarios with sample data
+├── HQT-CSDL_Đồ-án.pdf           # Official project specification
+└── README.md
+```
+
+---
+
+## 7. Installation and Reproduction
+
+### Prerequisites
+
+- Microsoft SQL Server (2019 or later recommended)  
+- SQL Server Management Studio (SSMS) or any T-SQL client  
+
+### Deployment Sequence
+
+Execute the scripts **in order** against a local SQL Server instance:
+
+```sql
+-- 1. Create database and schema
+:r Code/Nhóm-6_database.sql
+
+-- 2. Load experimental dataset
+:r Code/data.sql
+
+-- 3. Install production procedures
+:r Code/Nhóm-6_procedures.sql
+```
+
+Alternatively, open each file in SSMS and execute with `HQTCSDL` as the target database (the DDL script creates the database automatically).
+
+### Running a Concurrency Experiment
+
+1. Open **two** query windows connected to `HQTCSDL`.  
+2. From `Code/Nhom6_demo.sql`, select one anomaly block (e.g., Lost Update – Scenario 1).  
+3. Create the delayed “unsafe” procedure in either window.  
+4. Start the delayed procedure in Window A; within the delay window, start the contending procedure in Window B.  
+5. Observe the incorrect final state (anomaly).  
+6. Re-run the same workload using the production procedures (with isolation/locking enabled) and verify consistency.
+
+---
+
+## 8. Dataset Characteristics
+
+The seed script provisions a compact but conflict-prone workload:
+
+- **10** customers with loyalty cards  
+- **7** product categories and **50** products  
+- **50** warehouse stock rows  
+- **10** completed orders with line items  
+- **30** promotion headers, distributed across Flash-sale, Combo-sale, and Member-sale  
+- **10** purchase-order headers with delivery progress  
+
+Promotion validity windows and quantities are chosen so that concurrent order and campaign procedures can contend on the same SKUs and quotas.
+
+---
+
+## 9. Design Notes and Integrity Decisions
+
+- **Business rules live in procedures.** Per course requirements, only key and domain constraints are declared in DDL; remaining semantic constraints (tier thresholds, promotion eligibility, stock capacity, voucher redemption) are enforced inside stored procedures.  
+- **No triggers for business logic.** Automation is achieved through explicit procedure orchestration.  
+- **Order status vocabulary** is normalized to `N'Thành công'` / `N'Trả lại'` / `N'Đang xử lý'` so loyalty and analytics queries remain consistent with order finalization.  
+- **Customer deletion** removes dependent vouchers and loyalty rows first, and refuses deletion when historical orders still reference the customer—preserving referential integrity.  
+- **Combo-sale foreign keys** reference both participating products (`IDSanPham1`, `IDSanPham2`).
+
+---
+
+## 10. Authors
+
+| Student | Student ID |
+|---|---|
+| Đinh Việt Đức | 22127071 |
+| Nguyễn Thế Hiển | 22127107 |
+| Phan Thành Quang Huy | 22127162 |
+| Nguyễn Hữu Trường Sơn | 22127367 |
+
+**Instructors:** Tuấn Nguyễn Hoài Đức · Lương Hán Cơ  
+
+**Group:** Group 6  
+
+---
+
+## 11. Academic Context
+
+This work was developed for the *Database Management Systems* course at the Faculty of Information Technology, University of Science (VNU-HCM). Assessment milestones correspond to the four progress reports in `Report/` and the final SQL script submission in `Code/`.
+
+Suggested citation (informal):
+
+> Group 6 (2025). *Supermarket Information System: Transactional Design and Concurrency Control on Microsoft SQL Server*. Course project, Database Management Systems, University of Science, VNU-HCM.
+
+---
+
+## License
+
+Academic coursework artifact. Intended for educational use within the Database Management Systems curriculum unless otherwise stated by the authors or the hosting institution.
