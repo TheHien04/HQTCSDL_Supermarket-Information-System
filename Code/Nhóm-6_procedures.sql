@@ -184,7 +184,7 @@ BEGIN
 			PRINT N'Cập nhật thông tin khách hàng thành công.';
 		END
 
-		-- Xóa tài khoản khách hàng
+		-- Xóa tài khoản khách hàng (xóa bảng con trước để tránh vi phạm khóa ngoại)
 		ELSE IF @Action = 'D'
 		BEGIN
 			IF NOT EXISTS (SELECT 1 FROM KHACHHANG WITH (UPDLOCK, HOLDLOCK) WHERE SDT = @SDT)
@@ -194,9 +194,16 @@ BEGIN
 				RETURN;
 			END;
 
-			DELETE FROM KHACHHANG WITH (ROWLOCK) WHERE SDT = @SDT;
+			IF EXISTS (SELECT 1 FROM DonHang WITH (UPDLOCK, HOLDLOCK) WHERE SDT = @SDT)
+			BEGIN
+				RAISERROR(N'Khách hàng vẫn còn đơn hàng liên kết. Không thể xóa.', 16, 1);
+				ROLLBACK TRANSACTION;
+				RETURN;
+			END;
 
+			DELETE FROM PHIEUGIAMGIA WITH (ROWLOCK) WHERE SDT = @SDT;
 			DELETE FROM KHACHHANGTHE WITH (ROWLOCK) WHERE SDT = @SDT;
+			DELETE FROM KHACHHANG WITH (ROWLOCK) WHERE SDT = @SDT;
 
 			PRINT N'Xóa tài khoản khách hàng thành công.';
 		END
@@ -403,7 +410,7 @@ BEGIN
         END
 
         INSERT INTO SANPHAM WITH (TABLOCK)
-        VALUES (@MaSanPham, @NSX, @IDDanhMuc, @TenSanPham, @Gia);
+        VALUES (@MaSanPham, @TenSanPham, @NSX, @Gia, @IDDanhMuc);
 
         COMMIT TRANSACTION;
         PRINT N'Thêm sản phẩm thành công.';
@@ -768,7 +775,7 @@ BEGIN
 
         -- Cập nhật giá trị tổng hóa đơn vào Đơn hàng
         UPDATE DonHang WITH (ROWLOCK, HOLDLOCK)
-        SET TongGiaTriDonHang = @GiaTien, TinhTrangDonHang = N'Đã thành công'
+        SET TongGiaTriDonHang = @GiaTien, TinhTrangDonHang = N'Thành công'
         WHERE MaDonHang = @MaDonHang;
 
         -- Xóa phiếu tặng đã sử dụng
